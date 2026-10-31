@@ -1,6 +1,5 @@
 HELP.md
 target/
-.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
 
@@ -33,4 +32,32 @@ build/
 .vscode/
 
 
+
 .env
+
+### Angular / Node.js ###
+node_modules/
+dist/
+.angular/
+coverage/
+
+### Java ###
+*.class
+*.jar
+*.war
+*.log
+
+### Environment / Secrets ###
+.env.*
+!.env.example
+
+application-local.properties
+application-secret.properties
+
+### Temporary ###
+*.tmp
+*.bak
+
+### OS ###
+.DS_Store
+Thumbs.db

@@ -2,10 +2,18 @@ package com.abc.SpringBootSecqurityEx.service;
 
 import com.abc.SpringBootSecqurityEx.dtos.DashboardDTO;
 import com.abc.SpringBootSecqurityEx.dtos.DashboardChartDataDTO;
+import com.abc.SpringBootSecqurityEx.dtos.DashboardRecentOrderDTO;
+import com.abc.SpringBootSecqurityEx.dtos.DashboardRecentUserDTO;
 import com.abc.SpringBootSecqurityEx.dtos.ProductDTO;
 import com.abc.SpringBootSecqurityEx.entity.ProductEntity;
+import com.abc.SpringBootSecqurityEx.entity.order.Order;
+import com.abc.SpringBootSecqurityEx.repository.OrderRepository;
+import com.abc.SpringBootSecqurityEx.repository.ProductCatalogRepository;
 import com.abc.SpringBootSecqurityEx.repository.ProductRepository;
 import com.abc.SpringBootSecqurityEx.repository.UserRepository;
+import com.abc.SpringBootSecqurityEx.repository.VendorRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
@@ -21,11 +29,21 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class DashboardService {
     private final ProductRepository productRepository;
+    private final ProductCatalogRepository productCatalogRepository;
     private final UserRepository userRepository;
+    private final VendorRepository vendorRepository;
+    private final OrderRepository orderRepository;
 
-    public DashboardService(ProductRepository productRepository, UserRepository userRepository) {
+    public DashboardService(ProductRepository productRepository,
+                            ProductCatalogRepository productCatalogRepository,
+                            UserRepository userRepository,
+                            VendorRepository vendorRepository,
+                            OrderRepository orderRepository) {
         this.productRepository = productRepository;
+        this.productCatalogRepository = productCatalogRepository;
         this.userRepository = userRepository;
+        this.vendorRepository = vendorRepository;
+        this.orderRepository = orderRepository;
     }
     public DashboardDTO roleBasedDashboard(Authentication authentication) {
 
@@ -82,15 +100,25 @@ public class DashboardService {
     public DashboardDTO adminDashboard(Authentication authentication) {
         long totalUsers = userRepository.count();
         long enabledUsers = userRepository.countByEnabledTrue();
+        long totalCatalogProducts = productCatalogRepository.count();
+        Map<String, Long> adminMetrics = new LinkedHashMap<>();
+        adminMetrics.put("totalUsers", totalUsers);
+        adminMetrics.put("enabledUsers", enabledUsers);
+        adminMetrics.put("disabledUsers", totalUsers - enabledUsers);
+        adminMetrics.put("totalVendors", vendorRepository.count());
+        adminMetrics.put("pendingVendorApprovals", vendorRepository.countByVerifiedFalse());
+        adminMetrics.put("totalLegacyProducts", productRepository.count());
+        adminMetrics.put("activeLegacyProducts", productRepository.countByActiveTrue());
+        adminMetrics.put("inactiveLegacyProducts", productRepository.countByActiveFalse());
+        adminMetrics.put("totalCatalogProducts", totalCatalogProducts);
+        adminMetrics.put("activeCatalogProducts", productCatalogRepository.countByActiveTrue());
+        adminMetrics.put("inactiveCatalogProducts", productCatalogRepository.countByActiveFalse());
+        adminMetrics.put("totalOrders", orderRepository.count());
+        adminMetrics.put("pendingOrders", orderRepository.countByStatusIgnoreCase("PENDING"));
+        adminMetrics.put("deliveredOrders", orderRepository.countByStatusIgnoreCase("DELIVERED"));
+        adminMetrics.put("cancelledOrders", orderRepository.countByStatusIgnoreCase("CANCELLED"));
         return dashboard("admin", authentication,
-                Map.of(
-                        "totalUsers", totalUsers,
-                        "enabledUsers", enabledUsers,
-                        "disabledUsers", totalUsers - enabledUsers,
-                        "totalProducts", productRepository.count(),
-                        "activeProducts", productRepository.countByActiveTrue(),
-                        "inactiveProducts", productRepository.countByActiveFalse()
-                ),
+                adminMetrics,
                 productRepository.findAllByActiveTrueOrderByNameAsc().stream().limit(5).toList());
     }
 
@@ -115,7 +143,30 @@ public class DashboardService {
         dto.setMetrics(metrics);
         dto.setProducts(products.stream().map(this::toDto).toList());
         dto.setCharts(buildCharts(dashboardName));
+        if ("admin".equals(dashboardName)) {
+            dto.setRecentOrders(orderRepository.findAll(PageRequest.of(0, 5, Sort.by(Sort.Direction.DESC, "createdAt"))).getContent().stream()
+                    .map(this::toRecentOrderDto)
+                    .toList());
+            dto.setRecentRegistrations(userRepository.findAll(PageRequest.of(0, 5, Sort.by(Sort.Direction.DESC, "dateCreated"))).getContent().stream()
+                    .map(user -> new DashboardRecentUserDTO(
+                            user.getUserName(),
+                            user.getEmail(),
+                            user.getRoles().stream().map(Enum::name).sorted().toList(),
+                            user.getEnabled(),
+                            user.getDateCreated()))
+                    .toList());
+        }
         return dto;
+    }
+
+    private DashboardRecentOrderDTO toRecentOrderDto(Order order) {
+        return new DashboardRecentOrderDTO(
+                order.getId(),
+                order.getOrderNumber(),
+                order.getCustomer() == null ? null : order.getCustomer().getFullName(),
+                order.getStatus(),
+                order.getTotalAmount(),
+                order.getCreatedAt());
     }
 
     private Map<String, List<DashboardChartDataDTO>> buildCharts(String dashboardName) {

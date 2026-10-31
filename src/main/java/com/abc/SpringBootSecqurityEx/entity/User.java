@@ -54,8 +54,7 @@ public class User {
     @CollectionTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_name"))
     @Column(name = "role_name", nullable = false)
     @Enumerated(EnumType.STRING)
-    private Set<ERole> roles = EnumSet.of(ERole.ROLE_USER);
-
+private Set<ERole> roles = EnumSet.of(ERole.CUSTOMER);
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private Instant dateCreated;

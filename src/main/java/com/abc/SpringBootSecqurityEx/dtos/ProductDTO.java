@@ -40,7 +40,7 @@ public class ProductDTO {
     private Boolean active;
     private Boolean premium;
 
-    @Size(max = 1000)
+    @Size(max = 5_000_000)
     private String imageUrl;
 
     private OffsetDateTime createdAt;
