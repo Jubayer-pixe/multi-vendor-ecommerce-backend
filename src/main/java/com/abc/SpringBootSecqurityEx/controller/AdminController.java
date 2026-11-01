@@ -8,6 +8,7 @@ import com.abc.SpringBootSecqurityEx.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 
@@ -33,11 +34,18 @@ public class AdminController {
     @PutMapping("/users/{username}/roles")
     public ResponseEntity<UserDTO> updateUserRoles(
             @PathVariable String username,
-            @Valid @RequestBody RoleUpdateRequest roleUpdateRequest) {
+            @Valid @RequestBody RoleUpdateRequest roleUpdateRequest,
+            Authentication authentication) {
 
         User user = userRepository.findByUserName(username).orElse(null);
         if (user == null) {
             return ResponseEntity.notFound().build();
+        }
+
+        if (username.equals(authentication.getName())
+                || (user.getRoles() != null && user.getRoles().contains(ERole.SUPER_ADMIN))
+                || roleUpdateRequest.getRoles().contains(ERole.SUPER_ADMIN)) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN).build();
         }
 
         EnumSet<ERole> roles = EnumSet.noneOf(ERole.class);

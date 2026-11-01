@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -81,7 +82,8 @@ public class UserController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserDTO> updateUserStatus(
             @PathVariable String username,
-            @Valid @RequestBody StatusUpdateRequest statusRequest) {
+            @Valid @RequestBody StatusUpdateRequest statusRequest,
+            Authentication authentication) {
 
         Optional<User> existingUser = userRepository.findByUserName(username);
         if (existingUser.isEmpty()) {
@@ -89,6 +91,11 @@ public class UserController {
         }
 
         User user = existingUser.get();
+        if (Boolean.FALSE.equals(statusRequest.getEnabled())
+                && (username.equals(authentication.getName())
+                || (user.getRoles() != null && user.getRoles().contains(com.abc.SpringBootSecqurityEx.enums.ERole.SUPER_ADMIN)))) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN).build();
+        }
         user.setEnabled(statusRequest.getEnabled());
 
         User updatedUser = userRepository.save(user);
