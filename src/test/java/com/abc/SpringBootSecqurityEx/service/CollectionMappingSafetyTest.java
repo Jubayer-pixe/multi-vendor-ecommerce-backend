@@ -63,7 +63,7 @@ class CollectionMappingSafetyTest {
         OrderItem orderItem = new OrderItem(); orderItem.setId(50L); orderItem.setOrder(order);
         order.setItems(new ArrayList<>(List.of(orderItem)));
         OrderService orderService = new OrderService(repository(OrderRepository.class, order),
-                entityManager(related(OrderItem.class, 50L, orderItem)));
+                entityManager(related(OrderItem.class, 50L, orderItem)), null, null, null, null, null, null);
         OrderDTO orderDto = new OrderDTO(); orderDto.setId(5L); orderDto.setItemIds(List.of(50L));
         assertEquals(List.of(50L), orderService.save(orderDto).getItemIds());
         orderDto.setItemIds(List.of());

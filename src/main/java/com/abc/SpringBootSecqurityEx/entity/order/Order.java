@@ -1,6 +1,8 @@
 package com.abc.SpringBootSecqurityEx.entity.order;
 
 import com.abc.SpringBootSecqurityEx.entity.customer.Customer;
+import com.abc.SpringBootSecqurityEx.entity.delivery.Delivery;
+
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -52,4 +54,7 @@ public class Order {
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> items = new ArrayList<>();
+
+    @OneToOne(mappedBy = "order", fetch = FetchType.LAZY)
+    private Delivery delivery;
 }
