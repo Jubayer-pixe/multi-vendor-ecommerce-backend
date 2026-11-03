@@ -22,9 +22,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 @Configuration
-@EnableMethodSecurity(prePostEnabled = true)  // This enables @PreAuthorize
+@EnableMethodSecurity(prePostEnabled = true) // This enables @PreAuthorize
 public class SecurityConfig {
-
 
     @Value("${app.cors.allowed-origin-patterns:http://localhost:4200}")
     List<String> allowedOriginPatterns;
@@ -32,45 +31,46 @@ public class SecurityConfig {
     @Bean
     public FilterRegistrationBean<JwtAuthenticationFilter> jwtAuthenticationFilterRegistration(
             JwtAuthenticationFilter jwtAuthenticationFilter) {
-        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(jwtAuthenticationFilter);
+        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(
+                jwtAuthenticationFilter);
         registration.setEnabled(false);
         return registration;
     }
 
-
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http,
-                                           JwtAuthenticationFilter jwtAuthFilter,
-                                           CustomUserDetailsService userDetailsService,
-                                           AuthEntryPointJwt unauthorizedHandler,
-                                           SimpleAccessDeniedHandler accessDeniedHandler,
-                                           CorsConfigurationSource corsConfigurationSource) throws Exception {
+            JwtAuthenticationFilter jwtAuthFilter,
+            CustomUserDetailsService userDetailsService,
+            AuthEntryPointJwt unauthorizedHandler,
+            SimpleAccessDeniedHandler accessDeniedHandler,
+            CorsConfigurationSource corsConfigurationSource) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .authorizeHttpRequests(authz -> authz
                         .requestMatchers("/api/auth/signin", "/api/auth/signup").permitAll()
+                        .requestMatchers("/api/vendor-requests/**").authenticated()
+                        .requestMatchers("/api/admin/vendor-requests/**").hasRole("ADMIN")
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/catalog/products/public/**").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/catalog/products/public/**")
+                        .permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/categories/**").permitAll()
-                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/product-images/*/content").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/product-images/*/content")
+                        .permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/products").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/users/**").authenticated()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/products/**").permitAll()
                         .requestMatchers("/api/products/**").authenticated()
-                        .anyRequest().authenticated()
-                )
+                        .anyRequest().authenticated())
                 .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                )
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(exception -> exception
-                        .authenticationEntryPoint(unauthorizedHandler)   // Handle authentication errors
-                        .accessDeniedHandler(accessDeniedHandler)        // Handle authorization errors
+                        .authenticationEntryPoint(unauthorizedHandler) // Handle authentication errors
+                        .accessDeniedHandler(accessDeniedHandler) // Handle authorization errors
                 )
                 .authenticationProvider(authenticationProvider(userDetailsService))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
-
 
         return http.build();
     }
@@ -91,7 +91,6 @@ public class SecurityConfig {
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
     }
-
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {

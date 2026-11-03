@@ -32,37 +32,104 @@ public class VendorService {
         this.entityManager = entityManager;
     }
 
+    // public VendorDTO save(VendorDTO dto) {
+    //     if (dto.getId() == null) {
+    //         User user = requireVendorUser(dto.getUserName());
+    //         if (repository.existsByUser_UserName(user.getUserName())) {
+    //             throw new ResponseStatusException(HttpStatus.CONFLICT, "A vendor profile already exists for this user");
+    //         }
+    //         if (repository.existsByEmail(dto.getEmail())) {
+    //             throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor email is already in use");
+    //         }
+    //         Vendor entity = new Vendor();
+    //         copyToEntity(dto, entity, user);
+    //         return toDto(repository.save(entity));
+    //     }
+
+    //     Vendor entity = repository.findById(dto.getId())
+    //             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vendor profile not found"));
+    //     User user = requireVendorUser(dto.getUserName());
+    //     String currentUsername = entity.getUser() == null ? null : entity.getUser().getUserName();
+    //     if (!user.getUserName().equals(currentUsername)) {
+    //         throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor profile cannot be reassigned to another user");
+    //     }
+    //     if (repository.existsByUser_UserNameAndIdNot(user.getUserName(), entity.getId())) {
+    //         throw new ResponseStatusException(HttpStatus.CONFLICT, "A vendor profile already exists for this user");
+    //     }
+    //     if (repository.existsByEmailAndIdNot(dto.getEmail(), entity.getId())) {
+    //         throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor email is already in use");
+    //     }
+
+    //     copyToEntity(dto, entity, user);
+    //     return toDto(repository.save(entity));
+    // }
     public VendorDTO save(VendorDTO dto) {
-        if (dto.getId() == null) {
-            User user = requireVendorUser(dto.getUserName());
-            if (repository.existsByUser_UserName(user.getUserName())) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "A vendor profile already exists for this user");
-            }
-            if (repository.existsByEmail(dto.getEmail())) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor email is already in use");
-            }
-            Vendor entity = new Vendor();
-            copyToEntity(dto, entity, user);
-            return toDto(repository.save(entity));
+    if (dto.getId() == null) {
+        if (dto.getUserName() == null || dto.getUserName().isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "userName is required"
+            );
         }
 
-        Vendor entity = repository.findById(dto.getId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vendor profile not found"));
-        User user = requireVendorUser(dto.getUserName());
-        String currentUsername = entity.getUser() == null ? null : entity.getUser().getUserName();
-        if (!user.getUserName().equals(currentUsername)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor profile cannot be reassigned to another user");
-        }
-        if (repository.existsByUser_UserNameAndIdNot(user.getUserName(), entity.getId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "A vendor profile already exists for this user");
-        }
-        if (repository.existsByEmailAndIdNot(dto.getEmail(), entity.getId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor email is already in use");
+        User user = userRepository.findByUserName(dto.getUserName())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "User not found"
+                ));
+
+        if (repository.existsByUser_UserName(user.getUserName())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "A vendor profile already exists for this user"
+            );
         }
 
+        if (repository.existsByEmail(dto.getEmail())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Vendor email is already in use"
+            );
+        }
+
+        // Admin-created profile automatically grants the VENDOR role.
+        if (user.getRoles() == null) {
+            user.setRoles(new HashSet<>());
+        }
+        user.getRoles().add(ERole.VENDOR);
+        userRepository.save(user);
+
+        Vendor entity = new Vendor();
         copyToEntity(dto, entity, user);
         return toDto(repository.save(entity));
     }
+
+    Vendor entity = repository.findById(dto.getId())
+            .orElseThrow(() -> new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Vendor profile not found"
+            ));
+
+    String currentUsername =
+            entity.getUser() == null ? null : entity.getUser().getUserName();
+
+    if (!dto.getUserName().equals(currentUsername)) {
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Vendor profile cannot be reassigned to another user"
+        );
+    }
+
+    if (repository.existsByEmailAndIdNot(dto.getEmail(), entity.getId())) {
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Vendor email is already in use"
+        );
+    }
+
+    copyToEntity(dto, entity, entity.getUser());
+    return toDto(repository.save(entity));
+}
 
     @Transactional(readOnly = true)
     public Optional<VendorDTO> findById(Long id) {

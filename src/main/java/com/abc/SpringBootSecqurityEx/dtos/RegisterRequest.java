@@ -9,6 +9,7 @@ import lombok.Setter;
 @Getter
 @Setter
 public class RegisterRequest {
+
     @NotBlank
     @Size(max = 100)
     private String username;
@@ -27,4 +28,25 @@ public class RegisterRequest {
 
     @Size(max = 255)
     private String lastName;
+
+    private String accountType; // CUSTOMER or VENDOR
+
+    // vendor fields
+    @Size(max = 255)
+    private String businessName;
+
+    @Size(max = 255)
+    private String contactPerson;
+
+    @Size(max = 30)
+    private String businessPhone;
+
+    @Size(max = 500)
+    private String businessAddress;
+
+    @Size(max = 2000)
+    private String businessDescription;
+
+    @Size(max = 255)
+    private String tradeLicenseNumber;
 }
