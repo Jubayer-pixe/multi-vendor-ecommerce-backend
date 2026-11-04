@@ -458,3 +458,28 @@ To call the backend with relative `/api/...` URLs during `ng serve`, configure a
 4. Use the logged-in user's roles to show suitable dashboard and product-management navigation.
 5. Call the relevant `/api/dashboard/{role}` endpoint and handle `401` by returning to login and `403` by showing an access-denied view.
 6. Use an administrator account to assign `ROLE_MODERATOR` or `ROLE_PREMIUM_USER` to test specialized dashboards and actions.
+
+## Checkout invoices and order reports
+
+### Invoice creation
+
+`POST /api/orders/checkout` retains the existing JSON body and response contract and requires an `Idempotency-Key` UUID request header. The Angular client generates one key per logical checkout attempt and keeps it in tab-scoped `sessionStorage` across retries/reloads; it clears the key after success or explicit abandonment. Keys are scoped to the authenticated customer. A retry with the same normalized request returns the original checkout response; reusing the key with different request data returns `409 Conflict`. A transaction-scoped lock on that customer's user row serializes concurrent requests, while the database unique constraint on `(customer_id, idempotency_key)` is the final invariant. The order, payment, invoice, and saved response commit atomically. This does not backfill keys or invoices for orders created before the migration. Invoice numbers use `INV-<orderNumber>`. COD invoices record the persisted `PENDING` payment status; the backend does not mark COD as paid.
+
+### Customer order history
+
+`GET /api/orders/mine?page=0&size=20` requires a signed-in `CUSTOMER` and returns only the authenticated customer's orders as a paged Spring Data response. `size` is limited to 100. Payment method and status come from the most recently persisted payment for each order; a missing payment is returned as `null`.
+
+### Admin order report
+
+`GET /api/reports/orders` requires `ROLE_ADMIN` or `ROLE_SUPER_ADMIN`. Supported query parameters are `startDate=YYYY-MM-DD`, `endDate=YYYY-MM-DD`, `status`, `search`, `page`, and `size`. Dates use the order's persisted local `createdAt`; both boundaries are inclusive (the backend implements the end date as the next day's exclusive midnight). Search matches order number or customer name without case sensitivity. Invalid date ranges and invalid page sizes return `400`. Results are paginated, sorted newest first, and include order/customer/payment data read from persisted records plus `invoiceAvailable`. The admin report disables invoice actions when this field is false.
+
+### Invoice PDFs
+
+- `GET /api/invoices/orders/{orderId}/pdf` requires `ROLE_CUSTOMER`; ownership is checked against the authenticated principal's customer profile. A different customer's invoice is reported as `404` to avoid disclosing its existence.
+- `GET /api/invoices/admin/orders/{orderId}/pdf` requires `ROLE_ADMIN` or `ROLE_SUPER_ADMIN`.
+
+Both endpoints return `application/pdf` and a safe `Content-Disposition` filename based on the invoice number. The customer response is inline; the admin response is an attachment. Missing invoices return `404`; unauthenticated or unauthorized callers receive the configured `401`/`403` response.
+
+### PostgreSQL migration
+
+Apply `V20261104_01__invoice_tables.sql`, `V20261104_02__checkout_idempotency.sql`, and `V20261104_03__invoice_customer_name_255.sql` from `src/main/resources/db/manual/` in that order before deploying updated checkout. They create invoice snapshots, customer-scoped idempotency storage, and widen the invoice customer name without dropping data. There is no automatic historical invoice or idempotency backfill; report rows for older orders return `invoiceAvailable=false`, and PDF routes return `404` until a separately reviewed backfill is performed.

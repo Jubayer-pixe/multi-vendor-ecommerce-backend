@@ -17,14 +17,22 @@ import com.abc.SpringBootSecqurityEx.repository.CartRepository;
 import com.abc.SpringBootSecqurityEx.repository.CustomerRepository;
 import com.abc.SpringBootSecqurityEx.entity.order.Order;
 import com.abc.SpringBootSecqurityEx.entity.order.OrderItem;
+import com.abc.SpringBootSecqurityEx.entity.order.CheckoutIdempotency;
 import com.abc.SpringBootSecqurityEx.repository.OrderRepository;
+import com.abc.SpringBootSecqurityEx.repository.CheckoutIdempotencyRepository;
 import com.abc.SpringBootSecqurityEx.repository.PaymentRepository;
 import com.abc.SpringBootSecqurityEx.repository.ProductCatalogRepository;
 import com.abc.SpringBootSecqurityEx.repository.UserRepository;
 import com.abc.SpringBootSecqurityEx.repository.VendorOrderRepository;
 import com.abc.SpringBootSecqurityEx.util.NotFoundException;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,6 +40,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.HashSet;
 import java.util.UUID;
+import java.util.Comparator;
+import java.util.HexFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,11 +58,15 @@ public class OrderService {
     private final ProductCatalogRepository productRepository;
     private final VendorOrderRepository vendorOrderRepository;
     private final PaymentRepository paymentRepository;
+    private final InvoiceService invoiceService;
+    private final CheckoutIdempotencyRepository idempotencyRepository;
+    private final ObjectMapper objectMapper;
 
     public OrderService(OrderRepository repository, EntityManager entityManager, UserRepository userRepository,
                         CustomerRepository customerRepository, CartRepository cartRepository,
                         ProductCatalogRepository productRepository, VendorOrderRepository vendorOrderRepository,
-                        PaymentRepository paymentRepository) {
+                        PaymentRepository paymentRepository, InvoiceService invoiceService,
+                        CheckoutIdempotencyRepository idempotencyRepository, ObjectMapper objectMapper) {
         this.repository = repository;
         this.entityManager = entityManager;
         this.userRepository = userRepository;
@@ -61,9 +75,12 @@ public class OrderService {
         this.productRepository = productRepository;
         this.vendorOrderRepository = vendorOrderRepository;
         this.paymentRepository = paymentRepository;
+        this.invoiceService = invoiceService;
+        this.idempotencyRepository = idempotencyRepository;
+        this.objectMapper = objectMapper;
     }
 
-    public CheckoutResponse checkout(String username, CheckoutRequest request) {
+    public CheckoutResponse checkout(String username, UUID idempotencyKey, CheckoutRequest request) {
         if (username == null || username.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in as a customer to place an order");
         }
@@ -76,6 +93,12 @@ public class OrderService {
         if (user.getRoles() == null || !user.getRoles().contains(ERole.CUSTOMER)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only customer accounts can place orders");
         }
+        if (idempotencyKey == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key header is required");
+        }
+        // Serialize checkouts for this principal so concurrent requests with the same key
+        // observe the committed idempotency row instead of racing its unique constraint.
+        entityManager.lock(user, LockModeType.PESSIMISTIC_WRITE);
 
         Customer customer = customerRepository.findByUser_UserName(username).orElseGet(() -> {
             Customer created = new Customer();
@@ -85,9 +108,28 @@ public class OrderService {
             created.setPhone(request.getPhone().trim());
             return created;
         });
+        if (customer.getId() == null) {
+            customer = customerRepository.save(customer);
+        }
+        String requestHash = checkoutRequestHash(request);
+        Optional<CheckoutIdempotency> previous = idempotencyRepository
+                .findByCustomer_IdAndIdempotencyKey(customer.getId(), idempotencyKey.toString());
+        if (previous.isPresent()) {
+            CheckoutIdempotency prior = previous.get();
+            if (!prior.getRequestHash().equals(requestHash)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Idempotency-Key was already used with a different checkout request");
+            }
+            try {
+                return objectMapper.readValue(prior.getResponseJson(), CheckoutResponse.class);
+            } catch (JacksonException exception) {
+                throw new IllegalStateException("Stored checkout response could not be read", exception);
+            }
+        }
+
         customer.setFullName(request.getCustomerName().trim());
         customer.setPhone(request.getPhone().trim());
-        saveDeliveryAddress(customer, request);
+        CustomerAddress persistedAddress = saveDeliveryAddress(customer, request);
 
         Map<Long, Integer> requestedQuantities = new LinkedHashMap<>();
         for (CheckoutRequest.CheckoutItem line : request.getItems()) {
@@ -99,10 +141,11 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Your cart is empty");
         }
 
+        Customer checkoutCustomer = customer;
         Cart cart = cartRepository.findFirstByCustomer_User_UserNameAndStatusOrderByIdAsc(username, "ACTIVE")
                 .orElseGet(() -> {
                     Cart created = new Cart();
-                    created.setCustomer(customer);
+                    created.setCustomer(checkoutCustomer);
                     created.setStatus("ACTIVE");
                     return created;
                 });
@@ -195,6 +238,8 @@ public class OrderService {
         payment.setStatus("PENDING");
         paymentRepository.save(payment);
 
+        invoiceService.createForCheckout(order, payment, persistedAddress);
+
         cart.getItems().clear();
         cart.setStatus("CHECKED_OUT");
         cart.setUpdatedAt(LocalDateTime.now());
@@ -215,10 +260,54 @@ public class OrderService {
         response.setCity(request.getCity().trim());
         response.setPostalCode(request.getPostalCode().trim());
         response.setPaymentMethod("COD");
+        CheckoutIdempotency idempotency = new CheckoutIdempotency();
+        idempotency.setCustomer(customer);
+        idempotency.setIdempotencyKey(idempotencyKey.toString());
+        idempotency.setRequestHash(requestHash);
+        idempotency.setOrder(order);
+        idempotency.setResponseJson(serializeResponse(response));
+        idempotency.setCreatedAt(LocalDateTime.now());
+        idempotencyRepository.save(idempotency);
         return response;
     }
 
-    private void saveDeliveryAddress(Customer customer, CheckoutRequest request) {
+    static String checkoutRequestHash(CheckoutRequest request) {
+        StringBuilder canonical = new StringBuilder();
+        appendHashField(canonical, request.getCustomerName().trim());
+        appendHashField(canonical, request.getPhone().trim());
+        appendHashField(canonical, request.getAddress().trim());
+        appendHashField(canonical, request.getCity().trim());
+        appendHashField(canonical, request.getPostalCode().trim());
+        appendHashField(canonical, request.getPaymentMethod().trim().toUpperCase(java.util.Locale.ROOT));
+        appendHashField(canonical, request.getCustomerNote() == null ? "" : request.getCustomerNote().trim());
+        request.getItems().stream()
+                .sorted(Comparator.comparing(CheckoutRequest.CheckoutItem::getProductId)
+                        .thenComparing(CheckoutRequest.CheckoutItem::getQuantity))
+                .forEach(item -> {
+                    appendHashField(canonical, item.getProductId().toString());
+                    appendHashField(canonical, item.getQuantity().toString());
+                });
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is not available", exception);
+        }
+    }
+
+    private static void appendHashField(StringBuilder target, String value) {
+        target.append(value.length()).append(':').append(value).append(';');
+    }
+
+    private String serializeResponse(CheckoutResponse response) {
+        try {
+            return objectMapper.writeValueAsString(response);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Checkout response could not be stored", exception);
+        }
+    }
+
+    private CustomerAddress saveDeliveryAddress(Customer customer, CheckoutRequest request) {
         customer.getAddresses().forEach(saved -> saved.setDefaultAddress(false));
         CustomerAddress address = new CustomerAddress();
         address.setCustomer(customer);
@@ -230,6 +319,7 @@ public class OrderService {
         address.setDefaultAddress(true);
         customer.getAddresses().add(address);
         customerRepository.save(customer);
+        return address;
     }
 
     public OrderDTO save(OrderDTO dto) {

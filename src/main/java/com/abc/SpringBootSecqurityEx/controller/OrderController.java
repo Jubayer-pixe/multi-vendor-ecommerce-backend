@@ -3,10 +3,12 @@ package com.abc.SpringBootSecqurityEx.controller;
 import com.abc.SpringBootSecqurityEx.dtos.OrderDTO;
 import com.abc.SpringBootSecqurityEx.dtos.CheckoutRequest;
 import com.abc.SpringBootSecqurityEx.dtos.CheckoutResponse;
+import com.abc.SpringBootSecqurityEx.dtos.CustomerOrderRow;
 import com.abc.SpringBootSecqurityEx.service.OrderService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Page;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,22 +20,37 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.core.Authentication;
 import java.util.List;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
+import java.util.UUID;
+import com.abc.SpringBootSecqurityEx.service.OrderReportService;
 
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
     private final OrderService service;
+    private final OrderReportService reportService;
 
-    public OrderController(OrderService service) {
+    public OrderController(OrderService service, OrderReportService reportService) {
         this.service = service;
+        this.reportService = reportService;
+    }
+
+    @GetMapping("/mine")
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<Page<CustomerOrderRow>> myOrders(Authentication authentication,
+                                                            @RequestParam(defaultValue = "0") int page,
+                                                            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(reportService.findCustomerOrders(authentication.getName(), page, size));
     }
 
     @PostMapping("/checkout")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<CheckoutResponse> checkout(@Valid @RequestBody CheckoutRequest request,
-                                                       Authentication authentication) {
+                                                       Authentication authentication,
+                                                       @RequestHeader("Idempotency-Key") UUID idempotencyKey) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.checkout(authentication.getName(), request));
+                .body(service.checkout(authentication.getName(), idempotencyKey, request));
     }
 
     @GetMapping

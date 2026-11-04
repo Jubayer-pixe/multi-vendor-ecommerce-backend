@@ -18,6 +18,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import jakarta.servlet.DispatcherType;
 
 import java.util.List;
 
@@ -48,6 +49,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .authorizeHttpRequests(authz -> authz
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/signin", "/api/auth/signup").permitAll()
                         .requestMatchers("/api/vendor-requests/**").authenticated()
                         .requestMatchers("/api/admin/vendor-requests/**").hasRole("ADMIN")

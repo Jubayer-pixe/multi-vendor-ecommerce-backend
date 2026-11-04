@@ -34,3 +34,6 @@ build/
 
 
 .env
+.srs-work/
+.srs-work/
+.srs-render/
